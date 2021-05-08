@@ -1,0 +1,626 @@
+service: promoapp
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: 4000
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - "cloudwatch:*"
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - "ses:*"
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - "dynamodb:*"
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - "lambda:*"
+        - "s3:*"
+
+  apiKeys:
+    - ${opt:stage}-promoRESTKey1
+  usagePlan:
+    quota:
+      limit: 10000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+  environment:
+    QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+    QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+    QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+    QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+    QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    STAGE: ${opt:stage}
+    PROMO_ADMIN_ID: ${file(env-${opt:stage}.json):PROMO_ADMIN_ID}
+    DB_HOST: ${file(env-${opt:stage}.json):DB_HOST}
+    DB_NAME: ${file(env-${opt:stage}.json):DB_NAME}
+    DB_USER: ${file(env-${opt:stage}.json):DB_USER}
+    DB_PASSWORD: ${file(env-${opt:stage}.json):DB_PASSWORD}
+    SHARED_SECRET: ${file(env-${opt:stage}.json):SHARED_SECRET}
+
+functions:
+  runWeeklyJobForEvents:
+    handler: lambda/runWeeklyJobForEvents.handler
+    memorySize: 512
+    timeout: 300
+    environment:
+      REGION: eu-west-1
+      LAMBDA_GET_EVENTS_FROM_PHQ: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-getEventsFromPHQ
+      LAMBDA_GET_EVENTS_FROM_GPL: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-getEventsFromGPL
+    events:
+      - schedule: cron(0 1 ? * MON *)
+
+  getEventsFromPHQ:
+    handler: lambda/getEventsFromPHQ.handler
+    memorySize: 512
+    timeout: 300
+    environment:
+      REGION: eu-west-1
+      categories: "concerts,festivals,performing-arts,community,sports,politics"
+      PHQ_BASE_URL: "https://api.predicthq.com/v1"
+      PHQ_KEY: "QkS36BT4mfKRCrahrK1P1nyI7vYgp1"
+      LAMBDA_POST_EVENTS_TO_QB: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-addEvents
+
+  getEventsFromGPL:
+    handler: lambda/getEventsFromGPL.handler
+    memorySize: 512
+    timeout: 900
+    environment:
+      REGION: eu-west-1
+      categories: "Concerts,Festival,Performing Arts,Community,Sports,Politics"
+      GPL_BASE_URL: ${file(env-${opt:stage}.json):GPL_BASE_URL}
+      GPL_API_KEY: ${file(env-${opt:stage}.json):GPL_API_KEY}
+      LAMBDA_POST_EVENTS_TO_QB: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-addEvents
+
+  addEvents:
+    handler: lambda/post.handler
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+      PEXELS_AUTHORIZATION_KEY: ${file(env-${opt:stage}.json):PEXEL_KEY}
+      IMAGES_TABLE: eventimages${file(env-${opt:stage}.json):DB_PREFIX}
+      REGION: eu-west-1
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /events
+          method: post
+          cors: true
+
+  shareEvents:
+    handler: lambda/email.handler
+    environment:
+      Region: ${self:provider.region}
+      FROM: ${file(env-${opt:stage}.json):FROM}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /share/email
+          method: post
+          cors: true
+
+  sendEmailToPHQ:
+    handler: lambda/emailToPHQ.handler
+    environment:
+      Region: ${self:provider.region}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /emails/{type}
+          method: post
+          cors: true
+
+  shareEventCounter:
+    handler: lambda/shareCounter.handler
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /share
+          method: post
+          cors: true
+
+  subscribeEmail:
+    handler: lambda/emailoctopus.handler
+    timeout: 30
+    environment:
+      LIST_ID: ${file(env-${opt:stage}.json):LIST_ID}
+      EMAIL_BASE_URL: https://emailoctopus.com/api/1.2
+      API_KEY: ${file(env-${opt:stage}.json):API_KEY}
+      LAMBDA_SYNC: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-syncUsers
+    events:
+      - http:
+          path: subscribe
+          method: post
+          cors: true
+
+  unSubscribeEmail:
+    handler: lambda/unsubscribe.handler
+    timeout: 30
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    events:
+      - http:
+          path: /event/{id}/unsubscribe
+          method: put
+          cors: true
+
+  paymentgateway:
+    handler: lambda/paymentgateway.handler
+    timeout: 30
+    environment:
+      STRIPE_KEY: ${file(env-${opt:stage}.json):STRIPE_KEY}
+    events:
+      - http:
+          path: /user/{id}/billinghistory
+          method: GET
+          cors: true
+          private: true
+      - http:
+          path: /user/{id}/card
+          method: POST
+          cors: true
+          private: true
+      - http:
+          path: /user/{id}/completetransaction
+          method: POST
+          cors: true
+          private: true
+      - http:
+          path: /user/unsubscribestripe
+          method: POST
+          cors: true
+          private: true
+
+  runDailyJobForEvents:
+    handler: lambda/runDailyJobForEvents.handler
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    events:
+      # Invoke Lambda function every 30 minutes
+      - schedule: rate(30 minutes)
+
+  locationAccessCounter:
+    handler: lambda/locationaccess.handler
+    environment:
+      LOCATION_TABLE: locationaccess${file(env-${opt:stage}.json):DB_PREFIX}
+      LOCATION_TABLE_TILL_DATE: locationaccesstilldate${file(env-${opt:stage}.json):DB_PREFIX}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /location/access
+          method: post
+          cors: true
+
+  getTopCities:
+    handler: lambda/getTopCities.handler
+    environment:
+      CITY_TABLE: cityaccess${file(env-${opt:stage}.json):DB_PREFIX}
+      LAMBDA_GET_EVENTS_FROM_PHQ: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-getEventsFromPHQ
+    memorySize: 512
+    timeout: 300
+    events:
+      - schedule: cron(10 1 ? * MON *)
+
+  getTopLocations:
+    handler: lambda/getTopLocations.handler
+    environment:
+      LOCATION_TABLE: locationaccess${file(env-${opt:stage}.json):DB_PREFIX}
+      LAMBDA_GET_EVENTS_FROM_PHQ: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-getEventsFromPHQ
+    memorySize: 512
+    timeout: 300
+    events:
+      - schedule: cron(15 1 ? * MON *)
+
+  cityAccessCounter:
+    handler: lambda/cityaccess.handler
+    environment:
+      CITY_TABLE: cityaccess${file(env-${opt:stage}.json):DB_PREFIX}
+    memorySize: 512
+    timeout: 300
+    events:
+      - stream: arn:aws:dynamodb:eu-west-1:576180419135:table/locationaccess-test/stream/2018-04-30T11:38:58.344
+
+  getCouponCode:
+    handler: lambda/getcouponcode.handler
+    environment:
+      STRIPE_KEY: ${file(env-${opt:stage}.json):STRIPE_KEY}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: coupon/{id}
+          method: get
+          cors: true
+          private: true
+
+  getEventsFromQB:
+    handler: lambda/getEventsFromQB.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    runtime: nodejs8.10
+    events:
+      - http:
+          path: events
+          method: get
+          cors: true
+          private: true
+
+  createTicket:
+    handler: lambda/createticket.handler
+    environment:
+      REGION: ${file(env-${opt:stage}.json):REGION}
+      API_PREFIX: ${file(env-${opt:stage}.json):API_PREFIX}
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+      SHARED_SECRET: ${file(env-${opt:stage}.json):SHARED_SECRET}
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: events/tickets
+          method: post
+          cors: true
+          private: true
+
+  paymentsuccess:
+    handler: lambda/paymentsuccess.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      LAMBDA_APPROVE_TICKET: arn:aws:lambda:eu-west-1:576180419135:function:promoapp-${opt:stage,self:provider.stage}-approveTicket
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+    events:
+      - http:
+          path: tickets/paypal
+          method: post
+          cors: true
+
+  approveTicket:
+    handler: lambda/approveticket.handler
+    environment:
+      REGION: ${file(env-${opt:stage}.json):REGION}
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+      FROM: ${file(env-${opt:stage}.json):FROM}
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: events/tickets/{id}
+          method: put
+          cors: true
+          private: true
+
+  confirmTicket:
+    handler: lambda/confirmticket.handler
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: events/scan
+          method: post
+          cors: true
+          private: true
+
+  updateEvent:
+    handler: lambda/updateevent.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+      STRIPE_KEY: ${file(env-${opt:stage}.json):STRIPE_KEY}
+    events:
+      - http:
+          path: events/{event_id}
+          method: put
+          cors: true
+          private: true
+
+  searchEvents:
+    handler: lambda/searchevents.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      QB_APP_ID: ${file(env-${opt:stage}.json):QB_APP_ID}
+      QB_AUTH_KEY: ${file(env-${opt:stage}.json):QB_AUTH_KEY}
+      QB_AUTH_SECRET: ${file(env-${opt:stage}.json):QB_AUTH_SECRET}
+      QB_LOGIN: ${file(env-${opt:stage}.json):QB_LOGIN}
+      QB_PASSWORD: ${file(env-${opt:stage}.json):QB_PASSWORD}
+      GPL_BASE_URL: ${file(env-${opt:stage}.json):GPL_BASE_URL}
+      GPL_API_KEY: ${file(env-${opt:stage}.json):GPL_API_KEY}
+      PEXELS_AUTHORIZATION_KEY: ${file(env-${opt:stage}.json):PEXEL_KEY}
+      IMAGES_TABLE: eventimages${file(env-${opt:stage}.json):DB_PREFIX}
+      REGION: eu-west-1
+    events:
+      - http:
+          path: events/search
+          method: post
+          cors: true
+          private: true
+
+  getStates:
+    handler: lambda/getstates.handler
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: states/{country}
+          method: get
+          cors: true
+          private: true
+
+  adminreject:
+    handler: lambda/adminreject.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+      SHARED_SECRET: "616161"
+    events:
+      - http:
+          path: admin/reject/{id}
+          method: get
+          cors: true
+
+  createpromoevent:
+    handler: lambda/createpromoevent.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      STRIPE_KEY: ${file(env-${opt:stage}.json):STRIPE_KEY}
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+    events:
+      - http:
+          path: events/promo
+          method: post
+          cors: true
+
+  authentication:
+    handler: lambda-v2/auth/auth.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      UI_BASE_URL: ${file(env-${opt:stage}.json):UI_BASE_URL}
+      RESET_PASSWORD_URL: ${file(env-${opt:stage}.json):RESET_PASSWORD_URL}
+      FROM: ${file(env-${opt:stage}.json):FROM}
+      REGION: eu-west-1
+    events:
+      - http:
+          path: /auth/login
+          method: POST
+          cors: true
+      - http:
+          path: /auth/register
+          method: POST
+          cors: true
+      - http:
+          path: /auth/forgotpassword
+          method: POST
+          cors: true
+      - http:
+          path: /auth/changepassword
+          method: POST
+          cors: true
+      - http:
+          path: /auth/logout
+          method: POST
+          cors: true
+      - http:
+          path: /auth/resetpassword
+          method: POST
+          cors: true
+  token:
+    handler: lambda-v2/token/token.handler
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /token
+          method: POST
+          cors: true
+
+  profile:
+    handler: lambda-v2/profile/profile.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      API_PREFIX: ${file(env-${opt:stage}.json):API_PREFIX}
+      REGION: eu-west-1
+    events:
+      - http:
+          path: /profile/{user_id}
+          method: GET
+          cors: true
+      - http:
+          path: /profile/update
+          method: POST
+          cors: true
+      - http:
+          path: /profile/getFollowerList
+          method: GET
+          cors: true
+      - http:
+          path: /profile/getFollowingList
+          method: GET
+          cors: true
+      - http:
+          path: /profile/getInterestedEventsList
+          method: GET
+          cors: true   
+
+  event:
+    handler: lambda-v2/event/event.handler
+    memorySize: 512
+    timeout: 30
+    events: 
+      - http:
+          path: /event/updateAddress
+          method: POST
+          cors: true
+      - http:
+          path: /event/goingUsersInEvent
+          method: POST
+          cors: true
+      - http:
+          path: /event/getUpcoming
+          method: GET
+          cors: true    
+      - http:
+          path: /event/getPast
+          method: GET
+          cors: true   
+
+  user:
+    handler: lambda-v2/user/user.handler
+    memorySize: 512
+    timeout: 30
+    events: 
+      - http:
+          path: /user/followUser
+          method: POST
+          cors: true
+      - http:
+          path: /user/unfollowUser
+          method: POST
+          cors: true
+
+  tickets:
+    handler: lambda-v2/tickets/tickets.handler
+    memorySize: 512
+    timeout: 30
+    events: 
+      - http:
+          path: /ticket/getAllTickets
+          method: GET
+          cors: true
+      - http:
+          path: /ticket/{ticket_id}
+          method: GET
+          cors: true
+
+  general:
+    handler: lambda-v2/general/general.handler
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /general/postFeedback
+          method: POST
+          cors: true 
+      - http:
+          path: /general/getNotification
+          method: GET
+          cors: true
+      - http:
+          path: /general/searchUser
+          method: GET
+          cors: true     
+      - http:
+          path: /general/getAllUser
+          method: GET
+          cors: true 
+      - http:
+          path: /general/pushNotification
+          method: POST
+          cors: true  
+      - http:
+          path: /general/getEventCategories
+          method: GET
+          cors: true    
+
+  billing:
+    handler: lambda-v2/billing/billing.handler
+    memorySize: 512
+    timeout: 30
+    environment:
+      STRIPE_KEY: ${file(env-${opt:stage}.json):STRIPE_KEY}
+    events:
+      - http:
+          path: /users/{id}/billingHistory
+          method: GET
+          cors: true 
+      - http:
+          path: /users/getPlans
+          method: GET
+          cors: true
+      - http:
+          path: /users/getGatewayId
+          method: GET
+          cors: true    
+      - http:
+          path: /users/{id}/card
+          method: POST
+          cors: true
+      - http:
+          path: /users/{id}/completetransaction
+          method: POST
+          cors: true
+     
+  syncUsers:
+    handler: lambda/syncUsers.handler
+    timeout: 900
+    events:
+      - schedule: cron(45 23 * * ? *)
+
+
+  
+

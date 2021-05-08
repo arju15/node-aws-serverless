@@ -1,0 +1,26 @@
+{
+  "QB_APP_ID": "",
+  "QB_AUTH_KEY": "",
+  "QB_AUTH_SECRET": "",
+  "QB_LOGIN": "",
+  "QB_PASSWORD": "",
+  "PROMO_ADMIN_ID":"",
+  "LIST_ID": "",
+  "API_KEY": "",
+  "DB_PREFIX": "",
+  "STRIPE_KEY":"",
+  "PEXEL_KEY":"",
+  "API_PREFIX": "",
+  "FROM": "",
+  "GPL_BASE_URL":"",
+  "GPL_API_KEY":"",
+  "REGION": "",
+  "SHARED_SECRET": "",
+  "UI_BASE_URL":"",
+  "DB_HOST": "",
+  "DB_PORT": "",
+  "DB_USER": "",
+  "DB_PASSWORD": "",
+  "DB_NAME": ""
+
+}
